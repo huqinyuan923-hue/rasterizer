@@ -20,8 +20,8 @@ import {
   mat4LookAt, mat4Perspective, mat4ApplyPoint, mat4ApplyDir, mat4ApplyVec4,
   type Mat4, type Vec3,
 } from "./math.js";
-import { rasterizeTriangle, type ScreenVert, type FragmentShader, MAX_ATTRS } from "./raster.js";
-import { sample, type Texture, type SamplerKind } from "./texture.js";
+import { rasterizeShaded, type ScreenVert, type ShaderSpec, MAX_ATTRS } from "./raster.js";
+import type { Texture, SamplerKind } from "./texture.js";
 import { shadePhongPixel, NO_LIGHTS, type LightSetup } from "./shading.js";
 import { clipTriangleNear, type ClipVert } from "./clip.js";
 
@@ -83,7 +83,7 @@ function ensureCapacity(n: number): void {
   sPay = new Float64Array(cap * 8);
 }
 
-// ---- ScreenVert 池（每次最多 4 个裁剪输出顶点；rasterizeTriangle 同步消费） ----
+// ---- ScreenVert 池（每次最多 4 个裁剪输出顶点；rasterizeShaded 同步消费） ----
 const pool: ScreenVert[] = [0, 1, 2, 3, 4].map(() => ({
   x: 0, y: 0, invW: 0, dOverW: 0, aOverW: new Float64Array(MAX_ATTRS),
 }));
@@ -93,48 +93,7 @@ const clipPool: ClipVert[] = [0, 1, 2].map(() => ({
   x: 0, y: 0, z: 0, w: 0, d: 0, a: new Float64Array(MAX_ATTRS),
 }));
 
-function texturedShader(material: Material): FragmentShader {
-  const texture = material.texture!;
-  const kind: SamplerKind = material.sampler ?? "nearest";
-  const out = new Float64Array(3);
-  return (_l0, _l1, _l2, _denom, _d, attrs, rgb) => {
-    sample(texture, kind, attrs[0], attrs[1], out);
-    rgb[0] = out[0];
-    rgb[1] = out[1];
-    rgb[2] = out[2];
-  };
-}
-
-function gouraudShader(): FragmentShader {
-  return (_l0, _l1, _l2, _denom, _d, attrs, rgb) => {
-    rgb[0] = attrs[0];
-    rgb[1] = attrs[1];
-    rgb[2] = attrs[2];
-  };
-}
-
-function phongShader(material: Material, eye: Vec3, lights: LightSetup): FragmentShader {
-  const tex = material.texture;
-  const kind: SamplerKind = material.sampler ?? "nearest";
-  const smp = new Float64Array(3);
-  const ar0 = material.albedo[0], ag0 = material.albedo[1], ab0 = material.albedo[2];
-  const spec = material.specular, shin = material.shininess;
-  return (_l0, _l1, _l2, _denom, _d, attrs, rgb) => {
-    // 插值后的法线不再是单位长度，逐像素归一化（sqrt(x²+y²+z²)，0 时置 1）
-    let nx = attrs[3], ny = attrs[4], nz = attrs[5];
-    let nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
-    if (nl === 0) nl = 1;
-    nx /= nl; ny /= nl; nz /= nl;
-    let ar = ar0, ag = ag0, ab = ab0;
-    if (tex !== undefined) {
-      sample(tex, kind, attrs[6], attrs[7], smp);
-      ar = (smp[0] / 255) * ar0;
-      ag = (smp[1] / 255) * ag0;
-      ab = (smp[2] / 255) * ab0;
-    }
-    shadePhongPixel(nx, ny, nz, attrs[0], attrs[1], attrs[2], eye, lights, ar, ag, ab, spec, shin, rgb);
-  };
-}
+const TRI_IDS = new Int32Array(3);
 
 export class Renderer {
   constructor(private readonly fb: Framebuffer) {}
@@ -191,26 +150,34 @@ export class Renderer {
         }
       }
 
-      // ---- 着色器与属性布局 ----
+      // ---- 着色专用快速路径的着色描述 ----
       let attrCount = 0;
-      let shade: FragmentShader;
+      const shadeSpec: ShaderSpec = {
+        kind: mode === "textured" ? "textured" : mode === "gouraud" ? "gouraud" : "phong",
+        texture: material.texture,
+        bilinear: (material.sampler ?? "nearest") === "bilinear",
+        eye: camera.eye,
+        lights,
+        ar: material.albedo[0], ag: material.albedo[1], ab: material.albedo[2],
+        specular: material.specular,
+        shininess: material.shininess,
+      };
       if (mode === "textured") {
         attrCount = 2;
-        shade = texturedShader(material);
       } else if (mode === "gouraud") {
         attrCount = 3;
-        shade = gouraudShader();
       } else {
         attrCount = hasTex ? 8 : 6;
-        shade = phongShader(material, camera.eye, lights);
       }
 
       // ---- 三角形阶段：裁剪 → 扇形化 → 投影 → 剔除 → 光栅化 ----
       const tc = mesh.indices.length / 3;
       for (let t = 0; t < tc; t++) {
-        const ids = [mesh.indices[t * 3], mesh.indices[t * 3 + 1], mesh.indices[t * 3 + 2]];
+        TRI_IDS[0] = mesh.indices[t * 3];
+        TRI_IDS[1] = mesh.indices[t * 3 + 1];
+        TRI_IDS[2] = mesh.indices[t * 3 + 2];
         for (let k = 0; k < 3; k++) {
-          const i = ids[k];
+          const i = TRI_IDS[k];
           const cv = clipPool[k];
           cv.x = sClip[i * 4]; cv.y = sClip[i * 4 + 1]; cv.z = sClip[i * 4 + 2]; cv.w = sClip[i * 4 + 3];
           cv.d = sD[i];
@@ -243,7 +210,7 @@ export class Renderer {
           const area2 = (p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x);
           if (!(Math.abs(area2) > 1e-12)) continue;
           if (area2 > 0 && !material.doubleSided) continue;
-          rasterizeTriangle(fb, p0, p1, p2, attrCount, { depthTest: true, nearDist: CLIP_EPS }, shade);
+          rasterizeShaded(fb, p0, p1, p2, { depthTest: true, nearDist: CLIP_EPS }, shadeSpec);
         }
       }
     }

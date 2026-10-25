@@ -14,10 +14,16 @@ export interface ClipVert {
   a: Float64Array;                            // varying payload（clip 空间仿射，可线性插值）
 }
 
+// 快路径复用的输出数组（消费方同步使用，无重入）
+const FAST_TRIPLE: ClipVert[] = new Array(3);
+
 export function clipTriangleNear(v0: ClipVert, v1: ClipVert, v2: ClipVert, eps: number): ClipVert[] {
   const d0 = v0.w - eps, d1 = v1.w - eps, d2 = v2.w - eps;
   // 快路径：全部在近面前（原样返回，保持顶点序）
-  if (d0 >= 0 && d1 >= 0 && d2 >= 0) return [v0, v1, v2];
+  if (d0 >= 0 && d1 >= 0 && d2 >= 0) {
+    FAST_TRIPLE[0] = v0; FAST_TRIPLE[1] = v1; FAST_TRIPLE[2] = v2;
+    return FAST_TRIPLE;
+  }
   if (d0 < 0 && d1 < 0 && d2 < 0) return [];
 
   const verts = [v0, v1, v2];

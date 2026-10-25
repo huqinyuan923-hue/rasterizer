@@ -31,6 +31,24 @@ export interface LightSetup {
 
 export const NO_LIGHTS: LightSetup = { ambient: [0, 0, 0], dir: null, point: null };
 
+/**
+ * 整数指数平方链。与 Math.pow 在 IEEE 上不逐位等价，但 8bit 量化后与
+ * 黄金图（参考实现用 Math.pow）无差异 —— 黄金对拍为仲裁（见 DEVLOG M8）。
+ * 非整数指数回退 Math.pow。
+ */
+export function powInt(x: number, n: number): number {
+  if (n !== (n | 0) || n < 0) return Math.pow(x, n);
+  let result = 1;
+  let base = x;
+  let e = n | 0;
+  while (e > 0) {
+    if (e & 1) result *= base;
+    base *= base;
+    e >>>= 1;
+  }
+  return result;
+}
+
 export function shadePhongPixel(
   nx: number, ny: number, nz: number,
   px: number, py: number, pz: number,
@@ -63,7 +81,7 @@ export function shadePhongPixel(
       if (hl > 0) {
         const ndh = (nx * hx + ny * hy + nz * hz) / hl;
         if (ndh > 0) {
-          const s = specular * Math.pow(ndh, shininess);
+          const s = specular * powInt(ndh, shininess);
           r += dir.color[0] * s;
           g += dir.color[1] * s;
           b += dir.color[2] * s;
@@ -89,7 +107,7 @@ export function shadePhongPixel(
         if (hl > 0) {
           const ndh = (nx * hx + ny * hy + nz * hz) / hl;
           if (ndh > 0) {
-            const s = specular * Math.pow(ndh, shininess);
+            const s = specular * powInt(ndh, shininess);
             r += pt.color[0] * s * atten;
             g += pt.color[1] * s * atten;
             b += pt.color[2] * s * atten;
