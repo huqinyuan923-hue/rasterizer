@@ -4,6 +4,7 @@ import { run as runM3 } from "./gen_m3.js";
 import { run as runM4 } from "./gen_m4.js";
 import { run as runM5 } from "./gen_m5.js";
 import { run as runM6 } from "./gen_m6.js";
+import { run as runM7 } from "./gen_m7.js";
 
 runM1();
 runM2();
@@ -11,4 +12,5 @@ runM3();
 runM4();
 runM5();
 runM6();
+runM7();
 console.log("all golden images regenerated");
