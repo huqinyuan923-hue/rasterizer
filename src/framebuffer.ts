@@ -16,6 +16,8 @@ export class Framebuffer {
     this.depth = new Float32Array(width * height);
     // alpha 通道恒为 255（不透明），PPM 输出忽略 alpha
     for (let i = 3; i < this.color.length; i += 4) this.color[i] = 255;
+    // 深度初始 +Infinity：空缓冲接受任意片段（clear() 亦会重置）
+    this.depth.fill(Infinity);
   }
 
   /** 清屏：r/g/b ∈ [0,255]，深度重置为 +Infinity。 */
