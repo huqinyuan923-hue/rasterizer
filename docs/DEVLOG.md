@@ -41,3 +41,10 @@
 - **纹素边界歧义**：解析 UV 恰落在纹素边界 ±ULP 时，nearest 的格选择随浮点噪声翻转（如 u·64 = 48.0）。这不是插值 bug；解析对拍跳过边界 ±1e-3 的像素，黄金图不受影响（参考与正式同噪声同翻转，确定性保持）。
 - **投影公式冻结**：`sx = (clip.x/w + 1)*0.5*W`、`sy = (1 - clip.y/w)*0.5*H`、一切属性 `attr/w` 直接除法 —— 参考实现逐位复刻同一串运算，IEEE 确定性保证对拍 0 容差可行。
 - **采样器约定**：repeat 环绕（uu = u - floor(u)）；nearest = floor(uu·W) 钳位；bilinear = fx = uu·W - 0.5，索引环绕，先横后纵 lerp。
+
+## M6 — 着色（Lambert + Blinn-Phong，Gouraud/Phong 两档）
+
+- **光照公式**：`c = albedo⊙ambient + Σ[albedo⊙lightColor·max(N·L,0)·atten + lightColor·specular·max(N·H,0)^shininess·atten]`；方向光 + 点光（二次衰减 1/(1+k1·d+k2·d²)）+ 环境项。冻结约定：N·L ≤ 0 时该光源整体无贡献（含高光）——用轴对齐配置的手工锚定值（r=0.58 → 147.9 → 量化 148）钉死。
+- **Gouraud vs Phong**：同一管线两种属性打包 —— Gouraud 逐顶点光照后插值颜色（attr=[r,g,b]），Phong 插值世界坐标与法线（attr=[P,N]，带纹理时 +uv 共 8 个）逐像素光照。插值后的法线不再是单位长度，逐像素重归一化。
+- **踩坑（经典 y 翻转环绕坑）**：背面剔除最初写成"剔除 area2<0"，结果渲染出球体内壁（中心像素恰为纯环境光 22,8,7 暴露了它）。正确推导：视空间（y 上）CCW 的前向面，经投影 y 翻转后在 y-down 屏幕坐标里 area2 < 0 —— **前向面 = area2 < 0，应剔除 area2 > 0**。M5 的地面四边形因 doubleSided 掩盖了此错；教训：剔除逻辑必须有一个非 doubleSided 的3D黄金场景来验证（M6 球体正是）。
+- **手工锚定 + 黄金对拍双保险**：轴对齐/半向量/衰减/背光四个手工用例锚定公式本身；球+立方体双模式黄金图锚定管线集成；另断言 Gouraud 与 Phong 黄金图必须不同（防止两档意外同路径）。
