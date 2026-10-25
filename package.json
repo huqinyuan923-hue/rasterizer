@@ -1,0 +1,19 @@
+{
+  "name": "rasterizer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pure CPU software rasterizer in TypeScript — zero runtime dependencies, golden-image tested",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:demo": "tsc -p tsconfig.demo.json",
+    "test": "npm run build && node --test \"build/tests/*.test.js\"",
+    "golden": "npm run build && node build/tools/reference/gen_all.js",
+    "demo": "npm run build:demo && node tools/serve.mjs",
+    "bench": "npm run build && node build/tools/bench.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.3"
+  }
+}
