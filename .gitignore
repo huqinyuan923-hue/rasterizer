@@ -4,3 +4,4 @@ demo/js/
 .deploy/
 .tools/
 *.log
+.mimosa/
