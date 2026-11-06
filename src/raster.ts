@@ -135,17 +135,23 @@ export function rasterizeTriangle(
   const vaD = va.dOverW, vbD = vb.dOverW, vcD = vc.dOverW;
   const vaA = va.aOverW, vbA = vb.aOverW, vcA = vc.aOverW;
   const fbColor = fb.color, fbDepth = fb.depth, fbW = fb.width;
+  // 行常量：py 在行内不变，故 e_kx*(py - v_k.y) 每行只需算一次；
+  // 操作数与运算形式不变，逐位结果与逐像素求值完全一致（黄金图仲裁）。
+  const vaX = va.x, vaY = va.y, vbX = vb.x, vbY = vb.y, vcX = vc.x, vcY = vc.y;
   let count = 0;
   for (let y = ys; y <= ye; y++) {
     const py = y + 0.5;
+    const ry0 = e0x * (py - vaY);
+    const ry1 = e1x * (py - vbY);
+    const ry2 = e2x * (py - vcY);
     let idx = y * fbW + xs;
     for (let x = xs; x <= xe; x++, idx++) {
       const px = x + 0.5;
       // 逐像素直接求值（冻结语义）：黄金场景中存在精确 E==0 的平局像素，
       // 增量累积会破坏这些精确零 —— 性能优化不得改变求值方式。
-      const E0 = e0x * (py - va.y) - e0y * (px - va.x);
-      const E1 = e1x * (py - vb.y) - e1y * (px - vb.x);
-      const E2 = e2x * (py - vc.y) - e2y * (px - vc.x);
+      const E0 = ry0 - e0y * (px - vaX);
+      const E1 = ry1 - e1y * (px - vbX);
+      const E2 = ry2 - e2y * (px - vcX);
       let inside: boolean;
       if (E0 > 0 && E1 > 0 && E2 > 0) {
         inside = true;
@@ -277,14 +283,19 @@ export function rasterizeShaded(
   const eye = spec.eye, lights = spec.lights;
 
   let count = 0;
+  // 行常量提升（与 rasterizeTriangle 同理）：py 行内不变，逐位等价。
+  const vaX = va.x, vaY = va.y, vbX = vb.x, vbY = vb.y, vcX = vc.x, vcY = vc.y;
   for (let y = ys; y <= ye; y++) {
     const py = y + 0.5;
+    const ry0 = e0x * (py - vaY);
+    const ry1 = e1x * (py - vbY);
+    const ry2 = e2x * (py - vcY);
     let idx = y * fbW + xs;
     for (let x = xs; x <= xe; x++, idx++) {
       const px = x + 0.5;
-      const E0 = e0x * (py - va.y) - e0y * (px - va.x);
-      const E1 = e1x * (py - vb.y) - e1y * (px - vb.x);
-      const E2 = e2x * (py - vc.y) - e2y * (px - vc.x);
+      const E0 = ry0 - e0y * (px - vaX);
+      const E1 = ry1 - e1y * (px - vbX);
+      const E2 = ry2 - e2y * (px - vcX);
       let inside: boolean;
       if (E0 > 0 && E1 > 0 && E2 > 0) {
         inside = true;
@@ -321,10 +332,12 @@ export function rasterizeShaded(
           const fy = vv * th - 0.5;
           const x0 = Math.floor(fx), y0 = Math.floor(fy);
           const tx = fx - x0, ty = fy - y0;
-          const x0w = ((x0 % tw) + tw) % tw;
-          const x1w = (((x0 + 1) % tw) + tw) % tw;
-          const y0w = ((y0 % th) + th) % th;
-          const y1w = (((y0 + 1) % th) + th) % th;
+          // 回绕：定义域内 x0 ∈ [-1, tw-1]（fx = uu*tw-0.5, uu ∈ [0,1)），
+          // 单次条件回绕与 ((v % n) + n) % n 结果逐位相同（NaN 亦同），省掉每像素 8 次取模。
+          const x0w = x0 < 0 ? x0 + tw : x0 >= tw ? x0 - tw : x0;
+          const x1w = x0 + 1 >= tw ? x0 + 1 - tw : x0 + 1;
+          const y0w = y0 < 0 ? y0 + th : y0 >= th ? y0 - th : y0;
+          const y1w = y0 + 1 >= th ? y0 + 1 - th : y0 + 1;
           const o00 = (y0w * tw + x0w) * 4, o10 = (y0w * tw + x1w) * 4;
           const o01 = (y1w * tw + x0w) * 4, o11 = (y1w * tw + x1w) * 4;
           r = 0; g = 0; b = 0;
@@ -369,10 +382,11 @@ export function rasterizeShaded(
             const fy = vv * th - 0.5;
             const x0 = Math.floor(fx), y0 = Math.floor(fy);
             const tx = fx - x0, ty = fy - y0;
-            const x0w = ((x0 % tw) + tw) % tw;
-            const x1w = (((x0 + 1) % tw) + tw) % tw;
-            const y0w = ((y0 % th) + th) % th;
-            const y1w = (((y0 + 1) % th) + th) % th;
+            // 同 textured 分支：条件回绕与双重取模在定义域内逐位等价。
+            const x0w = x0 < 0 ? x0 + tw : x0 >= tw ? x0 - tw : x0;
+            const x1w = x0 + 1 >= tw ? x0 + 1 - tw : x0 + 1;
+            const y0w = y0 < 0 ? y0 + th : y0 >= th ? y0 - th : y0;
+            const y1w = y0 + 1 >= th ? y0 + 1 - th : y0 + 1;
             const o00 = (y0w * tw + x0w) * 4, o10 = (y0w * tw + x1w) * 4;
             const o01 = (y1w * tw + x0w) * 4, o11 = (y1w * tw + x1w) * 4;
             const c00r = tdata[o00], c10r = tdata[o10], c01r = tdata[o01], c11r = tdata[o11];
