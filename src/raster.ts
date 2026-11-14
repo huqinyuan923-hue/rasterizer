@@ -85,13 +85,16 @@ export type ShadeKind = "textured" | "gouraud" | "phong";
 
 export interface ShaderSpec {
   kind: ShadeKind;
-  texture?: Texture;      // textured / phong+uv
+  texture?: Texture;      // textured / phong+uv（mip 选层时由管线逐子三角形改写）
+  mipTex?: Texture;       // mip 一档（半分辨率）；管线按 texel 密度在 texture/mipTex 间选择
   bilinear?: boolean;     // 采样器选择
   eye?: Vec3;             // phong
   lights?: LightSetup;    // phong
+  spotsNorm?: Float64Array; // 聚光轴预归一化（每 render 一次，3/spot；零轴为 NaN 恒不命中）
   ar: number; ag: number; ab: number;   // albedo 0..1
   specular: number;
   shininess: number;
+  specularOn?: boolean;   // false → Lambert（无高光项）；缺省 true（blinnPhong）
 }
 
 /**
@@ -281,6 +284,9 @@ export function rasterizeShaded(
   const specAr = spec.ar, specAg = spec.ag, specAb = spec.ab;
   const hasTexAlbedo = kind === "phong" && tex !== undefined;
   const eye = spec.eye, lights = spec.lights;
+  const specOn = spec.specularOn !== false; // 缺省 true（blinnPhong）
+  const sps = lights?.spots;
+  const spNorm = spec.spotsNorm;
 
   let count = 0;
   // 行常量提升（与 rasterizeTriangle 同理）：py 行内不变，逐位等价。
@@ -413,7 +419,7 @@ export function rasterizeShaded(
           ag = tg * INV255 * specAg;
           ab = tb * INV255 * specAb;
         }
-        // 内联 Blinn-Phong（与 shading.ts 冻结公式一致）
+        // 内联 Blinn-Phong（与 shading.ts 冻结公式一致；多光源数组累积序 dirs→points→spots）
         let nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
         if (nl === 0) nl = 1;
         nx /= nl; ny /= nl; nz /= nl;
@@ -424,29 +430,33 @@ export function rasterizeShaded(
         r = ar * lights!.ambient[0];
         g = ag * lights!.ambient[1];
         b = ab * lights!.ambient[2];
-        const dir = lights!.dir;
-        if (dir !== null) {
+        const dirs = lights!.dirs;
+        for (let li = 0; li < dirs.length; li++) {
+          const dir = dirs[li];
           const lx = dir.dir[0], ly = dir.dir[1], lz = dir.dir[2];
           const ndl = nx * lx + ny * ly + nz * lz;
           if (ndl > 0) {
             r += ar * dir.color[0] * ndl;
             g += ag * dir.color[1] * ndl;
             b += ab * dir.color[2] * ndl;
-            const hx = lx + vx, hy = ly + vy, hz = lz + vz;
-            const hl = Math.sqrt(hx * hx + hy * hy + hz * hz);
-            if (hl > 0) {
-              const ndh = (nx * hx + ny * hy + nz * hz) / hl;
-              if (ndh > 0) {
-                const s = spec.specular * powInt(ndh, spec.shininess);
-                r += dir.color[0] * s;
-                g += dir.color[1] * s;
-                b += dir.color[2] * s;
+            if (specOn) {
+              const hx = lx + vx, hy = ly + vy, hz = lz + vz;
+              const hl = Math.sqrt(hx * hx + hy * hy + hz * hz);
+              if (hl > 0) {
+                const ndh = (nx * hx + ny * hy + nz * hz) / hl;
+                if (ndh > 0) {
+                  const s = spec.specular * powInt(ndh, spec.shininess);
+                  r += dir.color[0] * s;
+                  g += dir.color[1] * s;
+                  b += dir.color[2] * s;
+                }
               }
             }
           }
         }
-        const pt = lights!.point;
-        if (pt !== null) {
+        const pts = lights!.points;
+        for (let li = 0; li < pts.length; li++) {
+          const pt = pts[li];
           const ldx = pt.pos.x - pxx, ldy = pt.pos.y - pyy, ldz = pt.pos.z - pzz;
           const dist = Math.sqrt(ldx * ldx + ldy * ldy + ldz * ldz);
           if (dist > 0) {
@@ -457,15 +467,59 @@ export function rasterizeShaded(
               r += ar * pt.color[0] * ndl * atten;
               g += ag * pt.color[1] * ndl * atten;
               b += ab * pt.color[2] * ndl * atten;
-              const hx = lx + vx, hy = ly + vy, hz = lz + vz;
-              const hl = Math.sqrt(hx * hx + hy * hy + hz * hz);
-              if (hl > 0) {
-                const ndh = (nx * hx + ny * hy + nz * hz) / hl;
-                if (ndh > 0) {
-                  const s = spec.specular * powInt(ndh, spec.shininess);
-                  r += pt.color[0] * s * atten;
-                  g += pt.color[1] * s * atten;
-                  b += pt.color[2] * s * atten;
+              if (specOn) {
+                const hx = lx + vx, hy = ly + vy, hz = lz + vz;
+                const hl = Math.sqrt(hx * hx + hy * hy + hz * hz);
+                if (hl > 0) {
+                  const ndh = (nx * hx + ny * hy + nz * hz) / hl;
+                  if (ndh > 0) {
+                    const s = spec.specular * powInt(ndh, spec.shininess);
+                    r += pt.color[0] * s * atten;
+                    g += pt.color[1] * s * atten;
+                    b += pt.color[2] * s * atten;
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (sps !== undefined) {
+          for (let si = 0; si < sps.length; si++) {
+            const sp = sps[si];
+            const ax = spNorm![si * 3], ay = spNorm![si * 3 + 1], az = spNorm![si * 3 + 2];
+            // NaN 轴（零向量）→ cosTheta 恒为 NaN，不命中锥内（与慢路径"零轴无贡献"语义一致）
+            const ldx = sp.pos.x - pxx, ldy = sp.pos.y - pyy, ldz = sp.pos.z - pzz;
+            const dist = Math.sqrt(ldx * ldx + ldy * ldy + ldz * ldz);
+            if (dist > 0) {
+              const lx = ldx / dist, ly = ldy / dist, lz = ldz / dist;
+              const cosTheta = -(lx * ax + ly * ay + lz * az);
+              if (cosTheta > sp.cosOuter) {
+                const denom = sp.cosInner - sp.cosOuter;
+                // 冻结：denom > 0 软锥（截断到 (0,1]），否则硬锥
+                let tf = 1;
+                if (denom > 0) {
+                  tf = (cosTheta - sp.cosOuter) / denom;
+                  if (tf > 1) tf = 1;
+                }
+                const atten = 1 / (1 + sp.k1 * dist + sp.k2 * dist * dist);
+                const ndl = nx * lx + ny * ly + nz * lz;
+                if (ndl > 0) {
+                  r += ar * sp.color[0] * ndl * atten * tf;
+                  g += ag * sp.color[1] * ndl * atten * tf;
+                  b += ab * sp.color[2] * ndl * atten * tf;
+                  if (specOn) {
+                    const hx = lx + vx, hy = ly + vy, hz = lz + vz;
+                    const hl = Math.sqrt(hx * hx + hy * hy + hz * hz);
+                    if (hl > 0) {
+                      const ndh = (nx * hx + ny * hy + nz * hz) / hl;
+                      if (ndh > 0) {
+                        const s = spec.specular * powInt(ndh, spec.shininess);
+                        r += sp.color[0] * s * atten * tf;
+                        g += sp.color[1] * s * atten * tf;
+                        b += sp.color[2] * s * atten * tf;
+                      }
+                    }
+                  }
                 }
               }
             }

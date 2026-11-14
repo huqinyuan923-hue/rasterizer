@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>关卡编辑器 — software rasterizer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; gap: 14px; padding: 14px;
+    background: #14161a; color: #cfd6e0;
+    font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+  }
+  #left { display: flex; flex-direction: column; gap: 10px; }
+  canvas {
+    display: block; width: 512px; height: 512px;
+    border: 1px solid #2a2f37; border-radius: 6px;
+    image-rendering: pixelated; cursor: crosshair; touch-action: none;
+  }
+  #hud {
+    display: flex; gap: 12px; font: 12px/1.4 ui-monospace, Consolas, monospace;
+    color: #8b95a3; align-items: center;
+  }
+  #fps { color: #7fd08a; min-width: 70px; }
+  #right {
+    width: 330px; display: flex; flex-direction: column; gap: 10px;
+    max-height: calc(100vh - 28px); overflow-y: auto;
+  }
+  .panel {
+    background: #1a1d23; border: 1px solid #2a2f37; border-radius: 6px; padding: 10px;
+  }
+  .panel h2 { margin: 0 0 8px; font-size: 12px; color: #e8edf4; text-transform: uppercase; letter-spacing: 0.06em; }
+  #tree { font: 12px/1.7 ui-monospace, Consolas, monospace; max-height: 180px; overflow-y: auto; }
+  .tnode { padding: 1px 6px; border-radius: 3px; cursor: pointer; white-space: nowrap; }
+  .tnode:hover { background: #242933; }
+  .tnode.sel { background: #2c4a6e; color: #fff; }
+  .tnode.hid { opacity: 0.45; }
+  label { display: flex; align-items: center; gap: 8px; margin: 3px 0; font-size: 12px; }
+  label span.name { min-width: 86px; color: #8b95a3; }
+  input[type=range] { flex: 1; }
+  input[type=number] { width: 64px; background: #14161a; color: #cfd6e0; border: 1px solid #2a2f37; border-radius: 3px; padding: 2px 4px; }
+  input[type=text], select, textarea {
+    background: #14161a; color: #cfd6e0; border: 1px solid #2a2f37; border-radius: 3px; padding: 3px 6px; font: 12px/1.4 ui-monospace, Consolas, monospace;
+  }
+  textarea { width: 100%; height: 120px; resize: vertical; }
+  button {
+    background: #2c4a6e; color: #fff; border: 0; border-radius: 4px; padding: 5px 10px;
+    font: 12px/1.4 "Segoe UI", sans-serif; cursor: pointer; margin-right: 6px; margin-top: 4px;
+  }
+  button:hover { background: #38608f; }
+  button.warn { background: #7e3a3a; }
+  button.warn:hover { background: #a04848; }
+  .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  a { color: #6ea8dc; }
+</style>
+</head>
+<body>
+  <div id="left">
+    <a href="./index.html">← demo</a> · <a href="./game.html">游戏 →</a>
+    <canvas id="view" width="512" height="512"></canvas>
+    <div id="hud">
+      <span id="fps">--.- fps</span>
+      <span id="ms">---.- ms</span>
+      <span id="selinfo">未选中</span>
+      <label><span>分辨率</span>
+        <select id="scale">
+          <option value="1" selected>1.0×</option>
+          <option value="0.75">0.75×</option>
+          <option value="0.5">0.5×</option>
+          <option value="0.35">0.35×</option>
+        </select>
+      </label>
+    </div>
+  </div>
+  <div id="right">
+    <div class="panel">
+      <h2>场景树</h2>
+      <div id="tree"></div>
+      <div class="row">
+        <button id="addCube">+ 立方体</button>
+        <button id="addSphere">+ 球</button>
+        <button id="addTorus">+ 环面</button>
+        <button id="toggleVis">显示/隐藏</button>
+        <button id="delNode" class="warn">删除</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>材质参数</h2>
+      <div id="matPanel">
+        <em style="color:#667; font-size:12px;">选中一个物体后可编辑</em>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>场景 JSON 导入 / 导出</h2>
+      <textarea id="jsonBox" placeholder="导出的场景 JSON 出现在这里;粘贴 JSON 后点导入"></textarea>
+      <div class="row">
+        <button id="exportBtn">导出到文本框</button>
+        <button id="importBtn">从文本框导入</button>
+        <button id="downloadBtn">下载 scene.json</button>
+        <input type="file" id="fileInput" accept=".json" style="display:none">
+        <button id="loadFileBtn">从文件导入…</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>操作说明</h2>
+      <div style="font-size:12px; color:#8b95a3;">
+        点击物体选中 · 拖拽箭头移动 · 拖拽圆环旋转<br>
+        右键拖拽旋转视角 · 滚轮缩放距离<br>
+        快捷键:V 显示/隐藏 · Delete 删除
+      </div>
+    </div>
+  </div>
+  <script src="./js/demo/src/editor.js" type="module"></script>
+</body>
+</html>

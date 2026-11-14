@@ -7,8 +7,8 @@
 
 import type { Mesh, DrawItem, Camera } from "./pipeline.js";
 import type { LightSetup } from "./shading.js";
-import { mat4Mul, mat4RotY, mat4RotX, mat4Translation, mat4Identity, type Mat4 } from "./math.js";
 import { checkerTexture, type Texture } from "./texture.js";
+import { SceneNode, makeTransform, updateWorldMatrices, collectDrawItems } from "./scenegraph.js";
 
 /** 立方体：size 为边长，中心在原点。24 顶点（每面独立法线与 uv），12 三角形。 */
 export function makeCube(size = 1): Mesh {
@@ -120,10 +120,27 @@ export function stripeTexture(size: number, stripes: number, a: [number, number,
   return { width: size, height: size, data };
 }
 
+/**
+ * 地面四边形（编辑器/游戏通用）：边长 size 的水平方形，顶面高度 y，uv 0..1。
+ * 顶点序与演示场景 ground 一致（indices [0,2,1,0,3,2]）。
+ */
+export function makeGround(size: number, y: number): Mesh {
+  const h = size / 2;
+  return {
+    positions: [-h, y, -h, h, y, -h, h, y, h, -h, y, h],
+    normals: [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0],
+    uvs: [0, 0, 1, 0, 1, 1, 0, 1],
+    indices: [0, 2, 1, 0, 3, 2],
+  };
+}
+
 // ---------- 演示场景（可无头渲染，浏览器与测试共用） ----------
 
 export interface DemoScene {
-  items: DrawItem[];
+  /** 场景图根节点（编辑器/游戏可直接操作节点树）。 */
+  readonly root: SceneNode;
+  /** 绘制清单（getter：每次访问从场景图按冻结的 DFS 先序展平）。 */
+  readonly items: DrawItem[];
   lights: LightSetup;
   /** 推进动画：立方体自转、环面旋转、点光轨道（t 单位秒）。 */
   animate(tSec: number): void;
@@ -150,12 +167,11 @@ export function demoOrbitCamera(yaw: number, pitch: number, dist: number): Camer
   };
 }
 
-function compose(...ms: Mat4[]): Mat4 {
-  let out = ms[0];
-  for (let i = 1; i < ms.length; i++) out = mat4Mul(out, ms[i]);
-  return out;
-}
-
+/**
+ * 演示场景（二期迁移：节点树承载 transform 层级，动画只改节点 transform）。
+ * 冻结约束：展平后的绘制清单顺序与升级前一致（ground → cube → sphere → torus），
+ * 各节点 TRS 与升级前 animate 生成的 model 矩阵逐位一致（锚点黄金图仲裁）。
+ */
 export function buildDemoScene(): DemoScene {
   const groundTex = checkerTexture(128, 12, [190, 184, 172], [70, 76, 82]);
   const crateTex = checkerTexture(64, 4, [205, 150, 80], [138, 94, 50]);
@@ -171,50 +187,55 @@ export function buildDemoScene(): DemoScene {
     indices: [0, 2, 1, 0, 3, 2],
   };
 
-  const cube: DrawItem = {
-    mesh: cubeMesh, model: mat4Translation({ x: -1.7, y: -0.85, z: 0.2 }),
-    material: { albedo: [1, 1, 1], specular: 0.35, shininess: 24, texture: crateTex, sampler: "nearest" },
-  };
-  const sphere: DrawItem = {
-    mesh: sphereMesh, model: mat4Translation({ x: 0.05, y: -0.35, z: 0 }),
-    material: { albedo: [0.85, 0.3, 0.22], specular: 0.6, shininess: 48 },
-  };
-  const torus: DrawItem = {
-    mesh: torusMesh, model: mat4Translation({ x: 1.9, y: -0.92, z: -0.1 }),
-    material: { albedo: [1, 1, 1], specular: 0.85, shininess: 64, texture: torusTex, sampler: "bilinear" },
-  };
-  const ground: DrawItem = {
-    mesh: groundMesh, model: mat4Identity(),
+  // 场景图：root 下按 DFS 先序挂 ground → cube → sphere → torus（顺序冻结）
+  const root = new SceneNode("root");
+  const ground = new SceneNode("ground", {
+    mesh: groundMesh,
     material: { albedo: [1, 1, 1], specular: 0.06, shininess: 8, texture: groundTex, sampler: "bilinear", doubleSided: true },
-  };
+  });
+  const cube = new SceneNode("cube", {
+    transform: makeTransform({ x: -1.7, y: -0.85, z: 0.2 }),
+    mesh: cubeMesh,
+    material: { albedo: [1, 1, 1], specular: 0.35, shininess: 24, texture: crateTex, sampler: "nearest" },
+  });
+  const sphere = new SceneNode("sphere", {
+    transform: makeTransform({ x: 0.05, y: -0.35, z: 0 }),
+    mesh: sphereMesh,
+    material: { albedo: [0.85, 0.3, 0.22], specular: 0.6, shininess: 48 },
+  });
+  const torus = new SceneNode("torus", {
+    transform: makeTransform({ x: 1.9, y: -0.92, z: -0.1 }),
+    mesh: torusMesh,
+    material: { albedo: [1, 1, 1], specular: 0.85, shininess: 64, texture: torusTex, sampler: "bilinear" },
+  });
+  root.add(ground).add(cube).add(sphere).add(torus);
 
   const lights: LightSetup = {
     ambient: [0.12, 0.12, 0.14],
-    dir: { dir: [0.45, 0.8, 0.5], color: [0.85, 0.82, 0.75] },
-    point: { pos: { x: 3.2, y: 2.4, z: 0 }, color: [1.0, 0.78, 0.55], k1: 0.08, k2: 0.02 },
+    dirs: [{ dir: [0.45, 0.8, 0.5], color: [0.85, 0.82, 0.75] }],
+    points: [{ pos: { x: 3.2, y: 2.4, z: 0 }, color: [1.0, 0.78, 0.55], k1: 0.08, k2: 0.02 }],
+    spots: [],
   };
   {
-    const d = lights.dir!.dir;
+    const d = lights.dirs[0]!.dir;
     const l = Math.hypot(d[0], d[1], d[2]);
     d[0] /= l; d[1] /= l; d[2] /= l;
   }
 
   return {
-    items: [ground, cube, sphere, torus],
+    root,
+    get items(): DrawItem[] {
+      updateWorldMatrices(root);
+      return collectDrawItems(root);
+    },
     lights,
     animate(tSec: number): void {
-      cube.model = compose(
-        mat4Translation({ x: -1.7, y: -0.85, z: 0.2 }),
-        mat4RotY(tSec * 0.5),
-      );
-      torus.model = compose(
-        mat4Translation({ x: 1.9, y: -0.92, z: -0.1 }),
-        mat4RotY(tSec * 0.7),
-        mat4RotX(-0.14),
-      );
-      lights.point!.pos.x = 3.2 * Math.cos(tSec * 0.6);
-      lights.point!.pos.y = 2.4 + 0.5 * Math.sin(tSec * 0.9);
-      lights.point!.pos.z = 3.2 * Math.sin(tSec * 0.6);
+      cube.transform.rotationEuler.y = tSec * 0.5;
+      torus.transform.rotationEuler.y = tSec * 0.7;
+      torus.transform.rotationEuler.x = -0.14;
+      lights.points[0]!.pos.x = 3.2 * Math.cos(tSec * 0.6);
+      lights.points[0]!.pos.y = 2.4 + 0.5 * Math.sin(tSec * 0.9);
+      lights.points[0]!.pos.z = 3.2 * Math.sin(tSec * 0.6);
     },
   };
 }

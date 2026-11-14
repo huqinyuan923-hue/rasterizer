@@ -6,11 +6,21 @@ import { fileURLToPath } from "node:url";
 
 import { Framebuffer } from "../src/framebuffer.js";
 import { Renderer, type DrawItem } from "../src/pipeline.js";
-import { shadePhongPixel } from "../src/shading.js";
+import { shadePhongPixel, legacyLights, type LightSetup } from "../src/shading.js";
 import { makeSphere, makeCube } from "../src/scene.js";
 import { decodePPM, framebufferToRaw, type RawImage } from "../src/ppm.js";
 import { diffRGB } from "../src/diff.js";
 import { M6_CAMERA, M6_LIGHTS, M6_ITEMS } from "../tools/reference/gen_m6.js";
+
+/** 二期 LightSetup 升级为数组形态;冻结的 gen_m6 光照(旧形态)在此映射,数值引用不变。 */
+function toLightSetup(l: typeof M6_LIGHTS): LightSetup {
+  return { ambient: l.ambient, dirs: [l.dir], points: [l.point], spots: [] };
+}
+
+/** 锚定测试里的内联旧形态 setup → 数组形态。 */
+function adapt(s: { ambient: [number, number, number]; dir: null | { dir: [number, number, number]; color: [number, number, number] }; point: null | { pos: { x: number; y: number; z: number }; color: [number, number, number]; k1: number; k2: number } }): LightSetup {
+  return legacyLights(s.ambient, s.dir, s.point);
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GOLDEN_DIR = join(HERE, "..", "..", "golden");
@@ -29,7 +39,7 @@ function formalItems(): DrawItem[] {
 
 function renderFormal(mode: "gouraud" | "phong"): RawImage {
   const fb = new Framebuffer(128, 128);
-  new Renderer(fb).render(M6_CAMERA, formalItems(), mode, M6_LIGHTS);
+  new Renderer(fb).render(M6_CAMERA, formalItems(), mode, toLightSetup(M6_LIGHTS));
   return framebufferToRaw(fb);
 }
 
@@ -59,7 +69,7 @@ test("M6 手工锚定: N=L=V=+Z 的 Blinn-Phong 数值精确可预言", () => {
     point: { pos: { x: 0, y: 0, z: 10 }, color: [0.4, 0.4, 0.4] as [number, number, number], k1: 0, k2: 0 },
   };
   const out = new Float64Array(3);
-  shadePhongPixel(0, 0, 1, 0, 0, 0, { x: 0, y: 0, z: 5 }, setup, 0.3, 0.2, 0.1, 0.2, 8, out);
+  shadePhongPixel(0, 0, 1, 0, 0, 0, { x: 0, y: 0, z: 5 }, adapt(setup), 0.3, 0.2, 0.1, 0.2, 8, out);
   // r = 0.3*0.1 + 0.3*0.7 + 0.7*0.2 + 0.3*0.4 + 0.4*0.2 = 0.58 → 147.9
   assert.ok(Math.abs(out[0] - 147.9) < 1e-9, `r: ${out[0]}`);
   assert.ok(Math.abs(out[1] - 117.3) < 1e-9, `g: ${out[1]}`);
@@ -79,7 +89,7 @@ test("M6 手工锚定: 半向量高光 off-axis（N·L>0 但偏离镜面方向�
     point: null,
   };
   const out = new Float64Array(3);
-  shadePhongPixel(0, 0, 1, 0, 0, 0, { x: 0, y: 0, z: 1 }, setup, 1, 1, 1, 0.2, 8, out);
+  shadePhongPixel(0, 0, 1, 0, 0, 0, { x: 0, y: 0, z: 1 }, adapt(setup), 1, 1, 1, 0.2, 8, out);
   assert.ok(Math.abs(out[0] - 237.4611) < 1e-6, `diffuse+spec: ${out[0]}`);
 });
 
@@ -90,7 +100,7 @@ test("M6 约定: N·L == 0 时整个光源无贡献（含高光，冻结约定�
     point: null,
   };
   const out = new Float64Array(3);
-  shadePhongPixel(0, 0, 1, 0, 0, 0, { x: 0, y: 0, z: 1 }, setup, 1, 1, 1, 1, 8, out);
+  shadePhongPixel(0, 0, 1, 0, 0, 0, { x: 0, y: 0, z: 1 }, adapt(setup), 1, 1, 1, 1, 8, out);
   assert.ok(out[0] === 0 && out[1] === 0 && out[2] === 0);
 });
 
@@ -101,7 +111,7 @@ test("M6 手工锚定: 点光二次衰减 atten = 1/(1+k1·d+k2·d²)", () => {
     point: { pos: { x: 0, y: 0, z: 2 }, color: [1, 1, 1] as [number, number, number], k1: 0.5, k2: 0.5 },
   };
   const out = new Float64Array(3);
-  shadePhongPixel(0, 0, 1, 0, 0, 0, { x: 0, y: 0, z: 5 }, setup, 1, 1, 1, 0, 8, out);
+  shadePhongPixel(0, 0, 1, 0, 0, 0, { x: 0, y: 0, z: 5 }, adapt(setup), 1, 1, 1, 0, 8, out);
   // dist=2 → atten = 1/(1+1+2) = 0.25 → 0.25*255 = 63.75
   assert.ok(Math.abs(out[0] - 63.75) < 1e-9, `atten: ${out[0]}`);
 });
@@ -113,7 +123,7 @@ test("M6 背光: N·L ≤ 0 时该光源无贡献", () => {
     point: { pos: { x: 0, y: 0, z: -5 }, color: [1, 1, 1] as [number, number, number], k1: 0, k2: 0 },
   };
   const out = new Float64Array(3);
-  shadePhongPixel(0, 0, 1, 0, 0, 0, { x: 0, y: 0, z: 5 }, setup, 1, 1, 1, 0.5, 8, out);
+  shadePhongPixel(0, 0, 1, 0, 0, 0, { x: 0, y: 0, z: 5 }, adapt(setup), 1, 1, 1, 0.5, 8, out);
   assert.ok(out[0] === 0 && out[1] === 0 && out[2] === 0);
 });
 
@@ -151,7 +161,7 @@ test("M6 几何: 球/立方体法线单位长、面向外侧、索引合法", ()
 
 test("M6 场景: 正式渲染非空（球与立方体都贡献像素）", () => {
   const fb = new Framebuffer(128, 128);
-  new Renderer(fb).render(M6_CAMERA, formalItems(), "phong", M6_LIGHTS);
+  new Renderer(fb).render(M6_CAMERA, formalItems(), "phong", toLightSetup(M6_LIGHTS));
   let nonBg = 0;
   for (let i = 0; i < 128 * 128; i++) {
     if (fb.color[i * 4] !== 0 || fb.color[i * 4 + 1] !== 0 || fb.color[i * 4 + 2] !== 0) nonBg++;

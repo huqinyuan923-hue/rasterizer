@@ -29,11 +29,14 @@
     border-radius: 4px; padding: 4px 8px; pointer-events: none;
   }
   #fps { color: #7fd08a; min-width: 72px; }
+  a { color: #6ea8dc; text-decoration: none; }
+  a:hover { text-decoration: underline; }
   #hint { position: absolute; right: 10px; bottom: 10px; font: 12px/1.4 ui-monospace, Consolas, monospace; color: #8b95a3; background: rgba(10,12,16,0.6); padding: 3px 8px; border-radius: 4px; pointer-events: none; }
 </style>
 </head>
 <body>
   <h1>software rasterizer<small>纯 TypeScript · 零依赖 · 逐像素对拍</small></h1>
+  <div style="font: 13px/1.5 system-ui, sans-serif;"><a href="./editor.html">关卡编辑器 →</a> · <a href="./game.html">演示游戏「收集小径」 →</a></div>
   <div id="frame">
     <canvas id="view" width="512" height="512"></canvas>
     <div id="hud"><span id="fps">--.- fps</span><span id="ms">---.- ms</span><span>512×512</span></div>

@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "build:demo": "tsc -p tsconfig.demo.json",
     "test": "npm run build && node --test \"build/tests/*.test.js\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "golden": "npm run build && node build/tools/reference/gen_all.js",
     "demo": "npm run build:demo && node tools/serve.mjs",
     "bench": "npm run build && node build/tools/bench.js"

@@ -7,10 +7,14 @@ import { fileURLToPath } from "node:url";
 import { Framebuffer } from "../src/framebuffer.js";
 import { Renderer, CLIP_EPS, type DrawItem, type Mesh } from "../src/pipeline.js";
 import { clipTriangleNear, type ClipVert } from "../src/clip.js";
+import { legacyLights } from "../src/shading.js";
 import { decodePPM, framebufferToRaw, type RawImage } from "../src/ppm.js";
 import { diffRGB } from "../src/diff.js";
 import { M7_CAMERA, M7_LIGHTS, M7_TRIANGLES, renderM7 } from "../tools/reference/gen_m7.js";
 import { mat4Identity } from "../src/math.js";
+
+/** 二期 LightSetup 数组化:冻结的 gen_m7 光照(旧形态)在此映射,数值引用不变。 */
+const P2_LIGHTS = legacyLights(M7_LIGHTS.ambient, M7_LIGHTS.dir, M7_LIGHTS.point);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GOLDEN_DIR = join(HERE, "..", "..", "golden");
@@ -94,7 +98,7 @@ test("M7 黄金: 正式管线（真裁剪）与参考实现逐像素一致", () 
     material: { albedo: [t.c[0] / 255, t.c[1] / 255, t.c[2] / 255], specular: 0, shininess: 1, doubleSided: true },
   }));
   const fb = new Framebuffer(128, 128);
-  new Renderer(fb).render(M7_CAMERA, items, "gouraud", M7_LIGHTS);
+  new Renderer(fb).render(M7_CAMERA, items, "gouraud", P2_LIGHTS);
   const r = diffRGB(golden, framebufferToRaw(fb));
   assert.ok(r.ok, `golden mismatch: ${r.message} first=${JSON.stringify(r.first)}`);
 });
@@ -122,7 +126,7 @@ test("M7 guard: 完全在相机后的三角形不产出任何像素", () => {
     material: { albedo: [1, 0, 0], specular: 0, shininess: 1, doubleSided: true },
   };
   const fb = new Framebuffer(64, 64);
-  new Renderer(fb).render(M7_CAMERA, [behind], "gouraud", M7_LIGHTS);
+  new Renderer(fb).render(M7_CAMERA, [behind], "gouraud", P2_LIGHTS);
   let nonBg = 0;
   for (let i = 0; i < 64 * 64; i++) {
     if (fb.color[i * 4] !== 0 || fb.color[i * 4 + 1] !== 0 || fb.color[i * 4 + 2] !== 0) nonBg++;

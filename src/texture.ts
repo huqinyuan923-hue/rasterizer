@@ -10,6 +10,8 @@ export interface Texture {
   width: number;
   height: number;
   data: Uint8ClampedArray; // RGBA
+  /** mip 一档（半分辨率 box filter），由 buildMip1 构建；缺省 = 无 mip。 */
+  mip?: Texture;
 }
 
 export type SamplerKind = "nearest" | "bilinear";
@@ -83,4 +85,30 @@ export function sampleBilinear(t: Texture, u: number, v: number, out: Float64Arr
 export function sample(t: Texture, kind: SamplerKind, u: number, v: number, out: Float64Array): void {
   if (kind === "bilinear") sampleBilinear(t, u, v, out);
   else sampleNearest(t, u, v, out);
+}
+
+/**
+ * 构建 mip 一档（二期 M2）：半分辨率、2×2 box filter（RGBA 四通道都平均）。
+ * 冻结公式：data = (a + b + c + d) / 4，直接赋给 Uint8ClampedArray（四舍五入量化）。
+ * 奇数尺寸：丢弃末行/末列（mw = floor(w/2)、mh = floor(h/2），至少 1）。
+ * 结果纹理的 mip 字段不设置（一层即到顶）。
+ */
+export function buildMip1(t: Texture): Texture {
+  const mw = Math.max(1, Math.floor(t.width / 2));
+  const mh = Math.max(1, Math.floor(t.height / 2));
+  const data = new Uint8ClampedArray(mw * mh * 4);
+  const tw = t.width;
+  for (let y = 0; y < mh; y++) {
+    for (let x = 0; x < mw; x++) {
+      const o = (y * mw + x) * 4;
+      const o00 = ((y * 2) * tw + (x * 2)) * 4;
+      const o10 = ((y * 2) * tw + (x * 2 + 1)) * 4;
+      const o01 = ((y * 2 + 1) * tw + (x * 2)) * 4;
+      const o11 = ((y * 2 + 1) * tw + (x * 2 + 1)) * 4;
+      for (let c = 0; c < 4; c++) {
+        data[o + c] = (t.data[o00 + c] + t.data[o10 + c] + t.data[o01 + c] + t.data[o11 + c]) / 4;
+      }
+    }
+  }
+  return { width: mw, height: mh, data };
 }
