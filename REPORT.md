@@ -115,7 +115,7 @@
 | `npm test && npm run typecheck` 全绿,黄金图新增 ≥10 | ✅ | **116 测试全绿**(一期 60 → 二期 116);typecheck 通过;黄金图 9 → **21 张**(新增 12) |
 | 编辑器四功能各有单元测试(射线求交、序列化 round-trip) | ✅ | 拾取(screenRay/rayTriangle/raySphere/pickScene)、gizmo(投影/拾取/拖拽锚定)、序列化(往返渲染一致)共 12 个测试 |
 | 1 万三角形 60fps 基准留档;游戏截图入库 | ✅ | `npm run bench` [4]:512² 62fps(16.25ms)+ 分辨率扫描;`docs/img/game_512.png`、`docs/img/editor_512.png` 入库 |
-| push 部署后 raster.adcakeyuan.top 线上复验(编辑器 + 游戏两入口) | ✅(部署后填写实测) | /editor.html、/game.html 线上 200、控制台零错误、截图与本地一致 |
+| push 部署后线上复验(编辑器 + 游戏两入口) | ✅ | commit `0e5e407` 已推送 GitHub;wrangler 直传部署;`raster.adcakeyuan.top` 与 `rasterizer.pages.dev` 的 `/editor`、`/game` 均 200;浏览器实测:编辑器拾取/gizmo/JSON 导出正常(39fps@1.0×)、游戏 151.6fps@256² 输入链路活、控制台零错误 |
 | REPORT.md 增补二期章节 | ✅ | 本文件 |
 
 ## 三、已知限制
